@@ -16,14 +16,26 @@ fn main() {
                 }
 
                 if let Some(path) = start_line_sections.next() {
-                    let random_string = match path.split(|byte| byte == &(b'/')).nth(2) {
-                        Some(some_string) => some_string,
-                        None => b""
-                    };
+                    let mut path_sections = path.split(|byte| byte == &(b'/'));
 
-                    stream.write(b"HTTP/1.1 200 OK\r\n").unwrap();
-                    stream.write(b"Content-Type: text/plain\r\n\r\n").unwrap();
-                    stream.write(random_string).unwrap();
+                    // First empty section
+                    path_sections.next().unwrap();
+
+                    let mut response_body = None;
+
+                    if let Some(b"echo") = path_sections.next() {
+                        if let Some(random_string) = path_sections.next() {
+                            response_body = Some(random_string);
+                        }
+                    }
+                    
+                    if let Some(body) = response_body {
+                        stream.write(b"HTTP/1.1 200 OK\r\n").unwrap();
+                        stream.write(b"Content-Type: text/plain\r\n\r\n").unwrap();
+                        stream.write(body).unwrap();
+                    } else {
+                        stream.write(b"HTTP/1.1 404 Not Found\r\n\r\n").unwrap();
+                    }
                 }
 
                 stream.flush().unwrap();
