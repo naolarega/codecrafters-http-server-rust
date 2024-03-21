@@ -1,5 +1,7 @@
 use std::{io::{Read, Write}, net::TcpListener};
 
+use itertools::Itertools;
+
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
     
@@ -26,16 +28,14 @@ fn main() {
                         let mut response_body = None;
 
                         if let Some(b"echo") = path_sections.next() {
-                            if let Some(random_string) = path_sections.next() {
-                                response_body = Some(random_string);
-                            }
+                            response_body = Some(path_sections.map(|s| String::from_utf8_lossy(s)).join("/"));
                         }
                         
                         if let Some(body) = response_body {
                             stream.write(b"HTTP/1.1 200 OK\r\n").unwrap();
                             stream.write(b"Content-Type: text/plain\r\n").unwrap();
                             stream.write(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).unwrap();
-                            stream.write(body).unwrap();
+                            stream.write(body.as_bytes()).unwrap();
                         } else {
                             stream.write(b"HTTP/1.1 404 Not Found\r\n\r\n").unwrap();
                         }
