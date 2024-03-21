@@ -33,7 +33,8 @@ fn main() {
                         
                         if let Some(body) = response_body {
                             stream.write(b"HTTP/1.1 200 OK\r\n").unwrap();
-                            stream.write(b"Content-Type: text/plain\r\n\r\n").unwrap();
+                            stream.write(b"Content-Type: text/plain\r\n").unwrap();
+                            stream.write(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes()).unwrap();
                             stream.write(body).unwrap();
                         } else {
                             stream.write(b"HTTP/1.1 404 Not Found\r\n\r\n").unwrap();
