@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
+    thread,
 };
 
 enum Method {
@@ -160,47 +161,57 @@ impl<'a> Response<'a> {
     }
 }
 
+fn handle(mut stream: TcpStream) {
+    let request = Request::new(&mut stream);
+    let mut response = Response::new(&mut stream);
+
+    match request.path.as_str() {
+        "/" => {
+            response.set_status_code(StatusCode::OK).send(None).unwrap();
+        }
+        "/user-agent" => {
+            if let Some(user_agent) = request.headers.get("user-agent") {
+                response
+                    .set_status_code(StatusCode::OK)
+                    .set_header("Content-Type", "text/plain")
+                    .send(Some(user_agent.to_owned()))
+                    .unwrap();
+            } else {
+                response
+                    .set_status_code(StatusCode::NotFound)
+                    .send(None)
+                    .unwrap();
+            }
+        }
+        path => {
+            let path_sections = path.split('/').collect::<Vec<&str>>();
+
+            let mut response_body = None;
+
+            if path_sections[1] == "echo" {
+                response_body = Some(path_sections[2..].join("/"))
+            }
+
+            if let Some(body) = response_body {
+                response
+                    .set_status_code(StatusCode::OK)
+                    .set_header("Content-Type", "text/plain")
+                    .send(Some(body))
+                    .unwrap();
+            } else {
+                response
+                    .set_status_code(StatusCode::NotFound)
+                    .send(None)
+                    .unwrap();
+            }
+        }
+    }
+}
+
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     for mut stream in listener.incoming().flatten() {
-        let request = Request::new(&mut stream);
-        let mut response = Response::new(&mut stream);
-
-        match request.path.as_str() {
-            "/" => {
-                response.set_status_code(StatusCode::OK).send(None).unwrap();
-            }
-            "/user-agent" => {
-                if let Some(user_agent) = request.headers.get("user-agent") {
-                    response
-                        .set_status_code(StatusCode::OK)
-                        .set_header("Content-Type", "text/plain")
-                        .send(Some(user_agent.to_owned()))
-                        .unwrap();
-                } else {
-                    response.set_status_code(StatusCode::NotFound).send(None).unwrap();
-                }
-            }
-            path => {
-                let path_sections = path.split('/').collect::<Vec<&str>>();
-
-                let mut response_body = None;
-
-                if path_sections[1] == "echo" {
-                    response_body = Some(path_sections[2..].join("/"))
-                }
-
-                if let Some(body) = response_body {
-                    response
-                        .set_status_code(StatusCode::OK)
-                        .set_header("Content-Type", "text/plain")
-                        .send(Some(body))
-                        .unwrap();
-                } else {
-                    response.set_status_code(StatusCode::NotFound).send(None).unwrap();
-                }
-            }
-        }
+        thread::spawn(|| handle(stream));
     }
 }
