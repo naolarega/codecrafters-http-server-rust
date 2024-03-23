@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     env::args,
+    fmt::format,
     fs::{read_dir, File, ReadDir},
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -68,7 +69,7 @@ impl Request {
                 .collect::<Vec<String>>();
 
             if key_value[0].to_lowercase() == "content-length" {
-                content_length = key_value[1].parse().unwrap();
+                content_length = key_value[1].trim().parse().unwrap();
             }
 
             if key_value.len() >= 2 {
@@ -79,7 +80,7 @@ impl Request {
             }
         }
 
-        let mut body = [u8::default(), content_length];
+        let mut body = vec![u8::default(); content_length];
 
         if content_length > 0 {
             stream_buffer_reader.read_exact(&mut body).unwrap();
@@ -97,6 +98,7 @@ impl Request {
 
 enum StatusCode {
     OK = 200,
+    Created = 201,
     NotFound = 404,
 }
 
@@ -106,6 +108,7 @@ impl ToString for StatusCode {
 
         match self {
             OK => "200 OK".to_string(),
+            Created => "201 Created".to_string(),
             NotFound => "404 Not Found".to_string(),
         }
     }
@@ -170,6 +173,44 @@ impl<'a> Response<'a> {
     }
 }
 
+fn get_file(file_name: &str, directory: String, response: &mut Response) {
+    let dir_entries = read_dir(directory).unwrap();
+
+    if let Some(existing_file) = dir_entries
+        .flatten()
+        .find(|entry| entry.file_name() == file_name)
+    {
+        let mut file_content = String::new();
+
+        File::open(existing_file.path())
+            .unwrap()
+            .read_to_string(&mut file_content)
+            .unwrap();
+
+        response
+            .set_status_code(StatusCode::OK)
+            .set_header("Content-Type", "application/octet-stream")
+            .send(Some(file_content))
+            .unwrap();
+    } else {
+        response
+            .set_status_code(StatusCode::NotFound)
+            .send(None)
+            .unwrap();
+    }
+}
+
+fn post_file(file_name: &str, directory: String, request: &Request, response: &mut Response) {
+    let mut file = File::create(format!("{}/{}", directory, file_name)).unwrap();
+
+    file.write_all(request.body.as_bytes()).unwrap();
+
+    response
+        .set_status_code(StatusCode::Created)
+        .send(None)
+        .unwrap();
+}
+
 fn handle(mut stream: TcpStream) {
     let request = Request::new(&mut stream);
     let mut response = Response::new(&mut stream);
@@ -203,28 +244,15 @@ fn handle(mut stream: TcpStream) {
             }
 
             if let Some(directory_path) = directory_path {
-                let dir_entries = read_dir(directory_path).unwrap();
+                let file_name = file_path.strip_prefix("/files/").unwrap_or_default();
 
-                if let Some(existing_file) = dir_entries.flatten().find(|entry| {
-                    entry.file_name() == file_path.strip_prefix("/files/").unwrap_or_default()
-                }) {
-                    let mut file_content = String::new();
-
-                    File::open(existing_file.path())
-                        .unwrap()
-                        .read_to_string(&mut file_content)
-                        .unwrap();
-
-                    response
-                        .set_status_code(StatusCode::OK)
-                        .set_header("Content-Type", "application/octet-stream")
-                        .send(Some(file_content))
-                        .unwrap();
-                } else {
-                    response
-                        .set_status_code(StatusCode::NotFound)
-                        .send(None)
-                        .unwrap();
+                match request.method {
+                    Method::GET => {
+                        get_file(file_name, directory_path, &mut response);
+                    }
+                    Method::POST => {
+                        post_file(file_name, directory_path, &request, &mut response);
+                    }
                 }
             } else {
                 response
