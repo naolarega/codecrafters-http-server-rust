@@ -200,10 +200,9 @@ fn handle(mut stream: TcpStream) {
             if let Some(directory_path) = directory_path {
                 let dir_entries = read_dir(directory_path).unwrap();
 
-                if let Some(existing_file) = dir_entries
-                    .flatten()
-                    .find(|entry| entry.file_name() == file_path.strip_prefix("/file/").unwrap())
-                {
+                if let Some(existing_file) = dir_entries.flatten().find(|entry| {
+                    entry.file_name() == file_path.strip_prefix("/file/").unwrap_or_default()
+                }) {
                     let mut file_content = String::new();
 
                     File::open(existing_file.path())
