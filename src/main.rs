@@ -1,9 +1,13 @@
 use std::{
     collections::HashMap,
+    env::args,
+    fs::{read_dir, File, ReadDir},
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     thread,
 };
+
+use itertools::Itertools;
 
 enum Method {
     GET,
@@ -183,6 +187,48 @@ fn handle(mut stream: TcpStream) {
                     .unwrap();
             }
         }
+        file_path if file_path.starts_with("/file") => {
+            let args = args().collect::<Vec<_>>();
+
+            let mut directory_path = None;
+
+            if let Some((arg_position, _)) = args.iter().find_position(|arg| *arg == "--directory")
+            {
+                directory_path = Some(args[arg_position + 1].to_owned());
+            }
+
+            if let Some(directory_path) = directory_path {
+                let dir_entries = read_dir(directory_path).unwrap();
+
+                if let Some(existing_file) = dir_entries
+                    .flatten()
+                    .find(|entry| entry.file_name() == file_path.strip_prefix("/file/").unwrap())
+                {
+                    let mut file_content = String::new();
+
+                    File::open(existing_file.path())
+                        .unwrap()
+                        .read_to_string(&mut file_content)
+                        .unwrap();
+
+                    response
+                        .set_status_code(StatusCode::OK)
+                        .set_header("Content-Type", "application/octet-stream")
+                        .send(Some(file_content))
+                        .unwrap();
+                } else {
+                    response
+                        .set_status_code(StatusCode::NotFound)
+                        .send(Some("File doesn't exist".to_string()))
+                        .unwrap();
+                }
+            } else {
+                response
+                    .set_status_code(StatusCode::NotFound)
+                    .send(Some("Directory path no provided".to_string()))
+                    .unwrap();
+            }
+        }
         path => {
             let path_sections = path.split('/').collect::<Vec<&str>>();
 
@@ -211,7 +257,7 @@ fn handle(mut stream: TcpStream) {
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
-    for mut stream in listener.incoming().flatten() {
+    for stream in listener.incoming().flatten() {
         thread::spawn(|| handle(stream));
     }
 }
