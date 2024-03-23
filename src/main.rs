@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
 };
 
@@ -26,19 +26,18 @@ struct Request {
     path: String,
     version: String,
     headers: HashMap<String, String>,
+    body: String,
 }
 
 impl Request {
     pub fn new(stream: &mut TcpStream) -> Self {
-        let mut buf = Vec::new();
+        let mut stream_buffer_reader = BufReader::new(stream);
 
-        stream.read_to_end(&mut buf).unwrap();
+        let mut start_line_string = String::new();
 
-        let request = String::from_utf8(buf).unwrap();
-        let request = request.split("\r\n");
-        let request = request.map(|a| a.to_string()).collect::<Vec<String>>();
-
-        let start_line_string = request[0].to_owned();
+        stream_buffer_reader
+            .read_line(&mut start_line_string)
+            .unwrap();
 
         let start_line = start_line_string
             .split(' ')
@@ -47,8 +46,14 @@ impl Request {
 
         let mut headers = HashMap::new();
 
-        for header in request[1..].iter() {
-            if header.is_empty() {
+        let mut content_length = 0;
+
+        loop {
+            let mut header = String::new();
+
+            stream_buffer_reader.read_line(&mut header).unwrap();
+
+            if &header == "\r\n" {
                 break;
             }
 
@@ -57,9 +62,17 @@ impl Request {
                 .map(|a| a.to_string())
                 .collect::<Vec<String>>();
 
-            dbg!(&key_value);
+            if key_value[0].to_lowercase() == "content-length" {
+                content_length = key_value[1].parse().unwrap();
+            }
 
-            headers.insert(key_value[0].to_owned(), key_value[1].to_owned());
+            headers.insert(key_value[0].to_lowercase(), key_value[1].trim().to_owned());
+        }
+
+        let mut body = [u8::default(), content_length];
+
+        if content_length > 0 {
+            stream_buffer_reader.read_exact(&mut body).unwrap();
         }
 
         Self {
@@ -67,6 +80,7 @@ impl Request {
             path: start_line[1].to_owned(),
             version: start_line[2].to_owned(),
             headers,
+            body: String::from_utf8_lossy(&body).to_string(),
         }
     }
 }
@@ -117,20 +131,27 @@ impl<'a> Response<'a> {
     fn send(&mut self, body: Option<String>) -> Result<bool, &str> {
         if let Some(status_code) = &self.status_code {
             self.tcp_stream
-                .write(format!("HTTP/1.1 {}\r\n", status_code.to_string()).as_bytes()).unwrap();
+                .write(format!("HTTP/1.1 {}\r\n", status_code.to_string()).as_bytes())
+                .unwrap();
         } else {
             return Err("status code not set");
         }
 
         for (key, value) in self.headers.iter() {
             self.tcp_stream
-                .write(format!("{}:{}\r\n", key, value).as_bytes()).unwrap();
+                .write(format!("{}:{}\r\n", key.to_lowercase(), value).as_bytes())
+                .unwrap();
         }
 
-        self.tcp_stream.write(b"\r\n").unwrap();
-
         if let Some(body) = body {
+            self.tcp_stream
+                .write(format!("content-length:{}\r\n", body.len()).as_bytes())
+                .unwrap();
+            self.tcp_stream.write(b"\r\n").unwrap();
+
             self.tcp_stream.write(body.as_bytes()).unwrap();
+        } else {
+            self.tcp_stream.write(b"\r\n").unwrap();
         }
 
         self.tcp_stream.flush().unwrap();
@@ -148,9 +169,19 @@ fn main() {
 
         match request.path.as_str() {
             "/" => {
-                response.set_status_code(StatusCode::OK);
+                response.set_status_code(StatusCode::OK).send(None).unwrap();
             }
-            "/user-agent" => {}
+            "/user-agent" => {
+                if let Some(user_agent) = request.headers.get("user-agent") {
+                    response
+                        .set_status_code(StatusCode::OK)
+                        .set_header("Content-Type", "text/plain")
+                        .send(Some(user_agent.to_owned()))
+                        .unwrap();
+                } else {
+                    response.set_status_code(StatusCode::NotFound).send(None).unwrap();
+                }
+            }
             path => {
                 let path_sections = path.split('/').collect::<Vec<&str>>();
 
@@ -164,16 +195,12 @@ fn main() {
                     response
                         .set_status_code(StatusCode::OK)
                         .set_header("Content-Type", "text/plain")
-                        .set_header("Content-Length", format!("{}", body.len()).as_str())
-                        .send(Some(body)).unwrap();
-
-                    return;
+                        .send(Some(body))
+                        .unwrap();
                 } else {
-                    response.set_status_code(StatusCode::NotFound);
+                    response.set_status_code(StatusCode::NotFound).send(None).unwrap();
                 }
             }
         }
-
-        response.send(None).unwrap();
     }
 }
