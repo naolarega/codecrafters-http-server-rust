@@ -71,7 +71,12 @@ impl Request {
                 content_length = key_value[1].parse().unwrap();
             }
 
-            headers.insert(key_value[0].to_lowercase(), key_value[1].trim().to_owned());
+            if key_value.len() >= 2 {
+                headers.insert(
+                    key_value[0].to_lowercase(),
+                    key_value[1..].join(":").trim().to_owned(),
+                );
+            }
         }
 
         let mut body = [u8::default(), content_length];
@@ -187,7 +192,7 @@ fn handle(mut stream: TcpStream) {
                     .unwrap();
             }
         }
-        file_path if file_path.starts_with("/file") => {
+        file_path if file_path.starts_with("/files") => {
             let args = args().collect::<Vec<_>>();
 
             let mut directory_path = None;
@@ -201,7 +206,7 @@ fn handle(mut stream: TcpStream) {
                 let dir_entries = read_dir(directory_path).unwrap();
 
                 if let Some(existing_file) = dir_entries.flatten().find(|entry| {
-                    entry.file_name() == file_path.strip_prefix("/file/").unwrap_or_default()
+                    entry.file_name() == file_path.strip_prefix("/files/").unwrap_or_default()
                 }) {
                     let mut file_content = String::new();
 
@@ -218,13 +223,13 @@ fn handle(mut stream: TcpStream) {
                 } else {
                     response
                         .set_status_code(StatusCode::NotFound)
-                        .send(Some("File doesn't exist".to_string()))
+                        .send(None)
                         .unwrap();
                 }
             } else {
                 response
                     .set_status_code(StatusCode::NotFound)
-                    .send(Some("Directory path no provided".to_string()))
+                    .send(None)
                     .unwrap();
             }
         }
